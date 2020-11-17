@@ -1,24 +1,99 @@
 import random
 import time
+import arcade
 
 X = 0
 Y = 1
 
+GRAVITY = 1
+PLAYER_JUMP_SPEED = 20
+
 GAME_WIDTH = 400
 GAME_HEIGHT = 10000
+
+VIEWPORT_WIDTH = 600
+VIEWPORT_HEIGHT = 1000
 
 # 60 frames per second
 FRAME_TIME_MS = 1000  // 60
 
 PLATFORM_WIDTH = 50
-AGENT_WIDTH = 40
+PLAYER_WIDTH = 40
 
-# maximum height of a single jump
-JUMP_MAX_HEIGHT = 50
+PLAYER_X_SPEED = 10
 
 ACTION_LEFT = 1
 ACTION_RIGHT = 2
 ACTION_NONE = 3
+
+class Game(arcade.Window):
+
+    def __init__ (self):
+        
+        super().__init__(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "Doodle Jump")
+
+        self.environment = Environment()
+        self.agent = Agent(self.environment)
+
+        self.platform_sprites_list = None
+        self.player_sprite = None
+
+        self.physics_engine = None
+
+        arcade.set_background_color(arcade.csscolor.FLORAL_WHITE)
+
+    def setup(self):
+
+        self.platform_sprites_list = arcade.SpriteList(use_spatial_hash=True)
+        
+        self.player_sprite = arcade.Sprite("resources/doodle_left.png", 0.5)
+
+        self.player_sprite.left = self.agent.location[X]
+        self.player_sprite.bottom = self.agent.location[Y]
+
+        for platform in self.environment.platforms:
+
+            platform_sprite = arcade.Sprite("resources/platform.png", 1)
+
+            platform_sprite.left = platform[X]
+            platform_sprite.top = platform[Y]
+
+            self.platform_sprites_list.append(platform_sprite)
+        
+        self.physics_engine = arcade.PhysicsEnginePlatformer(self.player_sprite,
+                                                             self.platform_sprites_list,
+                                                             GRAVITY)
+
+    def on_draw (self):
+
+        # Clear the screen to the background color
+        arcade.start_render()
+
+        # Draw our sprites
+        self.platform_sprites_list.draw()
+        self.player_sprite.draw()
+
+    def on_key_press(self, key, modifiers):
+
+        if key == arcade.key.LEFT:
+            self.player_sprite.change_x = -PLAYER_X_SPEED
+        elif key == arcade.key.RIGHT:
+            self.player_sprite.change_x = PLAYER_X_SPEED
+
+    def on_key_release(self, key, modifiers):
+
+        if key == arcade.key.LEFT:
+            self.player_sprite.change_x += PLAYER_X_SPEED
+        elif key == arcade.key.RIGHT:
+            self.player_sprite.change_x -= PLAYER_X_SPEED
+
+    def on_update(self, delta_time):
+
+        self.physics_engine.update()
+
+        collides = arcade.check_for_collision_with_list(self.player_sprite, self.platform_sprites_list)
+
+        print(collides)
 
 class Agent:
 
@@ -34,76 +109,8 @@ class Agent:
 
         self.current_platform = 0
 
-        self.is_jumping = False
-        self.current_jump_height = 0
-
         self.dead = False
         self.has_won = False
-
-    def update_y (self, time_elapsed):
-
-        while time_elapsed > 0:
-
-            if self.is_jumping:
-                
-                self.location = (self.location[X], self.location[Y] + 1)
-                self.current_jump_height += 1
-                
-                if self.current_jump_height >= JUMP_MAX_HEIGHT:
-                    
-                    self.is_jumping = False
-                    self.current_jump_height = 0
-
-            else:
-                self.location = (self.location[X], self.location[Y] - 1)
-            
-            i = 0
-
-            for platform in self.environment.platforms:
-
-                if self.location[Y] - 1 == platform[Y]:
-                    
-                    if self.location[X] < platform[X] + PLATFORM_WIDTH:
-
-                        if self.location[X] > platform[X]:
-
-                            self.is_jumping = True
-                            self.current_jump_height = 0
-
-                            self.current_platform = i
-                i += 1
-            
-
-            time_elapsed -= 25
-
-    def update_x (self, action, time_elapsed):
-
-        while time_elapsed > 0:
-
-            if action == ACTION_LEFT:
-                self.location = (self.location[X] + 1, self.location[Y])
-            
-            elif action == ACTION_RIGHT:
-                self.location = (self.location[X] - 1, self.location[Y])
-
-            if self.location[X] > GAME_WIDTH:
-                self.location = (0 - AGENT_WIDTH, self.location[Y])
-            
-            elif self.location[X] < (-AGENT_WIDTH):
-                self.location = (GAME_WIDTH, self.location[Y])
-
-            time_elapsed -= 25
-
-    def update(self, action, time_elapsed):
-
-        self.update_x(action, time_elapsed)
-        self.update_y(time_elapsed)
-
-        if self.location[Y] >= GAME_HEIGHT:
-            self.has_won = True
-
-        if self.location[Y] < self.environment.platforms[self.current_platform][Y]:
-            self.dead = True
 
 
 class Environment:
@@ -115,9 +122,13 @@ class Environment:
 
     def generate_platforms(self):
 
-        platforms = []
+        current_height = 50
 
-        current_height = 0
+        decay = 150
+
+        platforms = [
+            ((GAME_WIDTH / 2) - PLATFORM_WIDTH / 2, current_height)
+        ]
 
         while current_height <= GAME_HEIGHT:
 
@@ -126,8 +137,8 @@ class Environment:
                 GAME_WIDTH - PLATFORM_WIDTH
             )
             platform_y = random.randint(
-                current_height, 
-                current_height + (JUMP_MAX_HEIGHT - 10)
+                current_height + 30, 
+                current_height + (decay - 10)
             )
 
             current_height = platform_y
@@ -138,34 +149,8 @@ class Environment:
 
         return platforms
 
-
-def get_time_ms():
-    return int(round(time.time() * 1000))
-
-def get_current_frame_time(last_frame_time):
-    return get_time_ms() - last_frame_time
-
 if __name__ == "__main__":
 
-    environment = Environment()
-    agent = Agent(environment)
-
-    last_frame_time = get_time_ms()
-
-    # Main loop
-    while agent.dead == False and agent.has_won == False:
-
-        time_elapsed = get_current_frame_time(last_frame_time)
-
-        # Wait for next frame and optimize with sleep
-        while time_elapsed < FRAME_TIME_MS:
-            time.sleep((FRAME_TIME_MS / 2) / 1000)
-            time_elapsed = get_current_frame_time(last_frame_time)
-
-        action = ACTION_NONE
-
-        agent.update(action, time_elapsed)
-
-        last_frame_time = get_time_ms()
-
-    print("Game finished. Agent %s!" % ("Lost" if agent.has_won else "Won"))
+    window = Game()
+    window.setup()
+    arcade.run()
