@@ -5,26 +5,40 @@ import arcade
 X = 0
 Y = 1
 
-GRAVITY = 1
-PLAYER_JUMP_SPEED = 20
-
 GAME_WIDTH = 400
 GAME_HEIGHT = 10000
 
 VIEWPORT_WIDTH = 600
 VIEWPORT_HEIGHT = 1000
 
-# 60 frames per second
-FRAME_TIME_MS = 1000  // 60
-
 PLATFORM_WIDTH = 50
-PLAYER_WIDTH = 40
 
-PLAYER_X_SPEED = 10
+# Gravity
+GRAVITY = 1500
 
-ACTION_LEFT = 1
-ACTION_RIGHT = 2
-ACTION_NONE = 3
+# Damping - Amount of speed lost per second
+DEFAULT_DAMPING = 1.0
+PLAYER_DAMPING = 0.4
+
+# Friction between objects
+PLAYER_FRICTION = 1.0
+WALL_FRICTION = 0.7
+
+# Mass (defaults to 1)
+PLAYER_MASS = 1
+
+# Keep player from going too fast
+PLAYER_MAX_HORIZONTAL_SPEED = 450
+PLAYER_MAX_VERTICAL_SPEED = 1600
+
+# Force applied when moving left/right in the air
+PLAYER_MOVE_FORCE_IN_AIR = 900
+
+# Strength of a jump
+PLAYER_JUMP_IMPULSE = 1800
+
+# Force applied while on the ground
+PLAYER_MOVE_FORCE_ON_GROUND = 8000
 
 class Game(arcade.Window):
 
@@ -37,6 +51,9 @@ class Game(arcade.Window):
 
         self.platform_sprites_list = None
         self.player_sprite = None
+
+        self.left_pressed = False
+        self.right_pressed = False
 
         self.physics_engine = None
 
@@ -59,10 +76,6 @@ class Game(arcade.Window):
             platform_sprite.top = platform[Y]
 
             self.platform_sprites_list.append(platform_sprite)
-        
-        self.physics_engine = arcade.PhysicsEnginePlatformer(self.player_sprite,
-                                                             self.platform_sprites_list,
-                                                             GRAVITY)
 
     def on_draw (self):
 
@@ -76,24 +89,28 @@ class Game(arcade.Window):
     def on_key_press(self, key, modifiers):
 
         if key == arcade.key.LEFT:
-            self.player_sprite.change_x = -PLAYER_X_SPEED
+            self.left_pressed = True
         elif key == arcade.key.RIGHT:
-            self.player_sprite.change_x = PLAYER_X_SPEED
+            self.right_pressed = True
 
     def on_key_release(self, key, modifiers):
 
         if key == arcade.key.LEFT:
-            self.player_sprite.change_x += PLAYER_X_SPEED
+            self.left_pressed = False
         elif key == arcade.key.RIGHT:
-            self.player_sprite.change_x -= PLAYER_X_SPEED
+            self.right_pressed = False
 
     def on_update(self, delta_time):
 
-        self.physics_engine.update()
+        if self.left_pressed and not self.right_pressed:
 
-        collides = arcade.check_for_collision_with_list(self.player_sprite, self.platform_sprites_list)
+            print(delta_time)
+            
+        elif self.right_pressed and not self.left_pressed:
 
-        print(collides)
+            print(delta_time)
+
+
 
 class Agent:
 
@@ -108,6 +125,8 @@ class Agent:
         )
 
         self.current_platform = 0
+
+        self.is_jumping = False
 
         self.dead = False
         self.has_won = False
