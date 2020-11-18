@@ -5,10 +5,10 @@ import arcade
 X = 0
 Y = 1
 
-GAME_WIDTH = 400
+GAME_WIDTH = 600
 GAME_HEIGHT = 30000
 
-VIEWPORT_WIDTH = 600
+VIEWPORT_WIDTH = 800
 VIEWPORT_HEIGHT = 1000
 
 PLATFORM_WIDTH = 50
@@ -26,7 +26,6 @@ def load_texture_pair(filename):
         arcade.load_texture(filename),
         arcade.load_texture(filename, flipped_horizontally=True)
     ]
-
 
 class Game(arcade.Window):
 
@@ -46,11 +45,22 @@ class Game(arcade.Window):
 
     def setup(self):
 
+        self.agent.reset(self.environment)
+
+        self.game_height = 0
+
         self.physics_engine = arcade.PhysicsEnginePlatformer(self.agent.sprite,
                                                              arcade.SpriteList(
                                                                  use_spatial_hash=True),
                                                              GRAVITY)
         self.physics_engine.disable_multi_jump()
+
+        arcade.set_viewport(
+                    0,
+                    VIEWPORT_WIDTH,
+                    0,
+                    VIEWPORT_HEIGHT
+                )
 
     def on_draw(self):
 
@@ -92,10 +102,12 @@ class Game(arcade.Window):
         self.physics_engine.platforms = effective_platforms
 
     def move_left(self):
+        
         self.agent.sprite.change_x = -MOVE_X
         self.agent.sprite.set_texture(0)
 
     def move_right(self):
+        
         self.agent.sprite.change_x = MOVE_X
         self.agent.sprite.set_texture(1)
 
@@ -106,17 +118,23 @@ class Game(arcade.Window):
         new_bottom = bottom
         new_top = top
 
+        must_scroll = False
+
         if bottom < self.game_height:
             new_bottom = bottom + 10
+            must_scroll = True
+        
         if new_top < VIEWPORT_HEIGHT + self.game_height:
             new_top = top + 10
+            must_scroll = True
 
-        arcade.set_viewport(
-                0,
-                VIEWPORT_WIDTH,
-                new_bottom,
-                new_top
-            )
+        if must_scroll:
+            arcade.set_viewport(
+                    0,
+                    VIEWPORT_WIDTH,
+                    new_bottom,
+                    new_top
+                )
 
     def on_update(self, delta_time):
 
@@ -140,6 +158,9 @@ class Game(arcade.Window):
 
         self.physics_engine.update()
 
+        if self.agent.sprite.top <= self.game_height:
+            self.setup()
+
         if self.agent.sprite.right < 0:
             self.agent.sprite.left = VIEWPORT_WIDTH
         elif self.agent.sprite.left > VIEWPORT_WIDTH:
@@ -152,7 +173,10 @@ class Agent:
 
     def __init__(self, environment):
 
-        self.environment = environment
+        self.reset(environment)
+
+
+    def reset(self, environment):
 
         first_platform = environment.platform_sprites[0]
 
@@ -167,9 +191,6 @@ class Agent:
 
         self.is_jumping = False
         self.current_jump_height = 0
-
-        self.dead = False
-        self.has_won = False
 
 
 class Environment:
