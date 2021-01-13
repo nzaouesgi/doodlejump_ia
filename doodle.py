@@ -1,6 +1,8 @@
 import random
 import time
 import arcade
+import numpy as np
+from sklearn.neural_network import MLPRegressor
 
 X = 0
 Y = 1
@@ -20,6 +22,18 @@ MAX_JUMP_HEIGHT = 250
 
 GRAVITY = 0.60
 
+ACTION_NOTHING = 0
+ACTION_GOING_LEFT = 1
+ACTION_GOING_RIGHT = 2
+ACTIONS = [ ACTION_NOTHING, ACTION_GOING_LEFT, ACTION_GOING_RIGHT ]
+
+LEARNING_RATE = 1
+DISCOUNT_FACTOR = 0.1
+DECISION_TIMEOUT = 0.15
+
+DEFAULT_REWARD = -10
+NEXT_PLATFORM_REWARD = 50
+DEAD_REWARD = -50
 
 def load_texture_pair(filename):
     return [
@@ -29,27 +43,25 @@ def load_texture_pair(filename):
 
 class Game(arcade.Window):
 
-    def __init__(self):
+    def __init__(self, agent, environment):
 
         super().__init__(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, "Doodle Jump")
 
-        self.environment = Environment()
-        self.agent = Agent(self.environment)
+        self.environment = environment
+        self.agent = agent
 
-        self.left_pressed = False
-        self.right_pressed = False
-
-        self.game_height = 0
+        self.decision_timeout = 0
+        self.current_action = ACTION_NOTHING
 
         self.background = arcade.load_texture("resources/bck.png")
 
     def setup(self):
 
-        self.agent.reset(self.environment)
+        self.environment.reset()
 
-        self.game_height = 0
+        self.last_height = self.environment.current_height
 
-        self.physics_engine = arcade.PhysicsEnginePlatformer(self.agent.sprite,
+        self.physics_engine = arcade.PhysicsEnginePlatformer(self.environment.player,
                                                              arcade.SpriteList(
                                                                  use_spatial_hash=True),
                                                              GRAVITY)
@@ -74,28 +86,16 @@ class Game(arcade.Window):
                                     self.background)
 
         # Draw our sprites
-        self.environment.platform_sprites.draw()
-        self.agent.sprite.draw()
-
-    def on_key_press(self, key, modifiers):
-        if key == arcade.key.LEFT:
-            self.left_pressed = True
-        elif key == arcade.key.RIGHT:
-            self.right_pressed = True
-
-    def on_key_release(self, key, modifiers):
-        if key == arcade.key.LEFT:
-            self.left_pressed = False
-        elif key == arcade.key.RIGHT:
-            self.right_pressed = False
+        self.environment.platforms.draw()
+        self.environment.player.draw()
 
     def set_effective_platforms(self):
 
         effective_platforms = arcade.SpriteList(use_spatial_hash=True)
 
-        for platform in self.environment.platform_sprites:
+        for platform in self.environment.platforms:
 
-            if platform.top <= self.agent.sprite.bottom:
+            if platform.top <= self.environment.player.bottom:
 
                 effective_platforms.append(platform)
 
@@ -103,13 +103,13 @@ class Game(arcade.Window):
 
     def move_left(self):
         
-        self.agent.sprite.change_x = -MOVE_X
-        self.agent.sprite.set_texture(0)
+        self.environment.player.change_x = -MOVE_X
+        self.environment.player.set_texture(0)
 
     def move_right(self):
         
-        self.agent.sprite.change_x = MOVE_X
-        self.agent.sprite.set_texture(1)
+        self.environment.player.change_x = MOVE_X
+        self.environment.player.set_texture(1)
 
     def scroll_viewport(self):
 
@@ -120,11 +120,11 @@ class Game(arcade.Window):
 
         must_scroll = False
 
-        if bottom < self.game_height:
+        if bottom < self.environment.current_height:
             new_bottom = bottom + 10
             must_scroll = True
         
-        if new_top < VIEWPORT_HEIGHT + self.game_height:
+        if new_top < VIEWPORT_HEIGHT + self.environment.current_height:
             new_top = top + 10
             must_scroll = True
 
@@ -136,83 +136,196 @@ class Game(arcade.Window):
                     new_top
                 )
 
-    def on_update(self, delta_time):
+    def update_game (self):
 
         self.set_effective_platforms()
 
-        if self.left_pressed:
+        if self.current_action == ACTION_GOING_LEFT:
             self.move_left()
-        elif self.right_pressed:
+        elif self.current_action == ACTION_GOING_RIGHT:
             self.move_right()
         else:
-            self.agent.sprite.change_x = 0
+            self.environment.player.change_x = 0
 
-        if self.agent.sprite.change_y <= 0.0:
+        if self.environment.player.change_y <= 0.0:
 
             if self.physics_engine.can_jump():
 
-                self.game_height = self.agent.sprite.bottom - \
-                    self.environment.platform_sprites[0].height
+                self.decision_timeout = DECISION_TIMEOUT
+
+                self.environment.current_height = self.environment.player.bottom - \
+                    self.environment.platforms[0].height
 
                 self.physics_engine.jump(MOVE_Y)
 
         self.physics_engine.update()
 
-        if self.agent.sprite.top <= self.game_height:
+        if self.environment.player.top <= self.environment.current_height:
             self.setup()
 
-        if self.agent.sprite.right < 0:
-            self.agent.sprite.left = VIEWPORT_WIDTH
-        elif self.agent.sprite.left > VIEWPORT_WIDTH:
-            self.agent.sprite.right = 0
+        if self.environment.player.right < 0:
+            self.environment.player.left = VIEWPORT_WIDTH
+        elif self.environment.player.left > VIEWPORT_WIDTH:
+            self.environment.player.right = 0
         
         self.scroll_viewport()
 
+    def get_reward(self):
+
+        reward = -5
+
+        if self.last_height < self.environment.current_height:
+            reward = 100
+            self.last_height = self.environment.current_height
+        
+        elif self.last_height > self.environment.current_height:
+            reward = -50
+        
+        return reward
+
+    def on_update(self, delta_time):
+
+        self.decision_timeout += delta_time
+
+        if self.decision_timeout >= DECISION_TIMEOUT:
+
+            self.current_action = self.agent.best_action()
+            self.decision_timeout = 0
+
+            if random.randint(95, 100) > 95:
+                self.agent.learn(self.current_action, self.environment.get_state(), self.get_reward())
+
+        self.update_game()
 
 class Agent:
 
     def __init__(self, environment):
 
-        self.reset(environment)
+        self.environment = environment
+        self.policy = Policy()
+        self.reset()
 
+    def reset(self):
+        self.state = self.environment.get_state()
+        self.score = 0
 
-    def reset(self, environment):
+    def best_action (self):
+        return self.policy.best_action(self.state)
 
-        first_platform = environment.platform_sprites[0]
+    def learn(self, action, new_state, reward):
+        previous_state = self.state
+        self.policy.update(previous_state, new_state, action, reward)
+        self.state = new_state
+        self.score += reward
 
-        filename = "resources/doodle_left.png"
+class Policy: #ANN
+    def __init__(self):
+        
+        self.learning_rate = LEARNING_RATE
+        self.discount_factor = DISCOUNT_FACTOR
+        self.actions = ACTIONS
+        self.maxX = VIEWPORT_WIDTH + 50
+        self.maxY = VIEWPORT_HEIGHT + 50
 
-        self.sprite = arcade.Sprite(scale=0.5)
-        for t in load_texture_pair(filename):
-            self.sprite.append_texture(t)
-        self.sprite.set_texture(0)
-        self.sprite.center_x = first_platform.center_x
-        self.sprite.bottom = first_platform.bottom + first_platform.height
+        self.mlp = MLPRegressor(hidden_layer_sizes = (8,),
+                                activation = 'tanh',
+                                solver = 'adam',
+                                learning_rate_init = self.learning_rate,
+                                #max_iter = 1,
+                                warm_start = True)
+        self.mlp.fit([[0, 0]], [[0, 0, 0]])
+        self.q_vector = [ 0, 0, 0 ]
 
-        self.is_jumping = False
-        self.current_jump_height = 0
+    def __repr__(self):
+        return self.q_vector
+
+    def state_to_dataset(self, state):
+
+        return np.array([
+            [
+                #state[0][0] / self.maxX, state[0][1] / self.maxY,
+                #state[1][0] / self.maxX, state[1][1] / self.maxY
+                state[0] / self.maxX,
+                state[1] / self.maxX
+            ]
+        ])
+
+    def best_action(self, state):
+        dataset = self.state_to_dataset(state)
+        self.q_vector = self.mlp.predict(dataset)[0] #Vérifier que state soit au bon format
+        action = self.actions[np.argmax(self.q_vector)]
+        return action
+
+    def update(self, previous_state, state, last_action, reward):
+        #Q(st, at) = Q(st, at) + learning_rate * (reward + discount_factor * max(Q(state)) - Q(st, at))
+        maxQ = np.amax(self.q_vector)
+        self.q_vector[last_action] += reward + self.discount_factor * maxQ
+
+        inputs = self.state_to_dataset(previous_state)
+        outputs = np.array([self.q_vector])
+        self.mlp.fit(inputs, outputs)
 
 
 class Environment:
 
     def __init__(self):
 
-        self.platform_sprites = arcade.SpriteList(use_spatial_hash=True)
+        self.level_platforms_coordinates = self.generate_platforms_coordinates()
+        self.reset()
 
-        for coordinates in self.generate_platforms_coordinates():
+    def reset (self):
+        self.setup_platforms()
+        self.setup_player()
+        self.current_height = 0
+
+    def get_next_platform_coordinates(self):
+        for i, platform in enumerate(self.platforms):
+            if platform.bottom >= self.current_height:
+                #return (platform.center_x, platform.center_y)
+                return self.platforms[i + 1].center_x
+
+    def get_state(self):
+        
+        return [
+            #(self.player.center_x, self.player.center_y),
+            #self.get_next_platform_coordinates()
+            self.player.center_x,
+            self.get_next_platform_coordinates()
+        ]
+
+    def setup_platforms(self):
+
+        self.platforms = arcade.SpriteList(use_spatial_hash=True)
+
+        for coordinates in self.level_platforms_coordinates:
 
             sprite = arcade.Sprite("resources/platform.png", 1)
 
             sprite.center_x = coordinates[X]
             sprite.center_y = coordinates[Y]
 
-            self.platform_sprites.append(sprite)
+            self.platforms.append(sprite)
+
+    def setup_player(self):
+        
+        first_platform = self.platforms[0]
+
+        filename = "resources/doodle_left.png"
+
+        self.player = arcade.Sprite(scale=0.5)
+        for t in load_texture_pair(filename):
+            self.player.append_texture(t)
+        
+        self.player.set_texture(0)
+        self.player.center_x = first_platform.center_x
+        self.player.bottom = first_platform.bottom + first_platform.height
+
 
     def generate_platforms_coordinates(self):
 
         current_height = 50
 
-        platforms = [
+        coordinates = [
             ((GAME_WIDTH / 2), current_height)
         ]
 
@@ -221,30 +334,34 @@ class Environment:
 
         while current_height <= GAME_HEIGHT:
 
-            platform_x = random.randint(
+            x = random.randint(
                 0,
                 GAME_WIDTH - PLATFORM_WIDTH
             )
-            platform_y = random.randint(
-                current_height + min_decay,
+            y = random.randint(
+                #current_height + min_decay,
+                current_height + MAX_JUMP_HEIGHT,
                 current_height + MAX_JUMP_HEIGHT
+                
             )
 
             if random.choice([ True, False ]):
                 if min_decay < max_decay:
                     min_decay += 1
 
-            current_height = platform_y
+            current_height = y
+            c = (x, y)
 
-            platform = (platform_x, platform_y)
+            coordinates.append(c)
 
-            platforms.append(platform)
-
-        return platforms
+        return coordinates
 
 
 if __name__ == "__main__":
 
-    window = Game()
+    environment = Environment()
+    agent = Agent(environment)
+
+    window = Game(agent, environment)
     window.setup()
     arcade.run()
