@@ -31,9 +31,10 @@ LEARNING_RATE = 1
 DISCOUNT_FACTOR = 0.1
 DECISION_TIMEOUT = 0.15
 
-DEFAULT_REWARD = -10
-NEXT_PLATFORM_REWARD = 50
-DEAD_REWARD = -50
+DEFAULT_REWARD = -1
+NEXT_PLATFORM_REWARD = 150
+LAST_PLATFORM_REWARD = 1
+DEAD_REWARD = -200
 
 def load_texture_pair(filename):
     return [
@@ -56,9 +57,8 @@ class Game(arcade.Window):
         self.background = arcade.load_texture("resources/bck.png")
 
     def setup(self):
-
         self.environment.reset()
-
+        
         self.last_height = self.environment.current_height
 
         self.physics_engine = arcade.PhysicsEnginePlatformer(self.environment.player,
@@ -136,6 +136,17 @@ class Game(arcade.Window):
                     new_top
                 )
 
+    def jumped (self):
+        self.environment.current_height = self.environment.player.bottom - \
+                    self.environment.platforms[0].height
+        if self.environment.current_height - 40 > self.last_height:
+            # Player landed on the next platform
+            self.last_height = self.environment.current_height
+            self.agent.learn(self.current_action, self.environment.get_state(), NEXT_PLATFORM_REWARD)
+        else:
+            # Player landed on last platform
+            self.agent.learn(self.current_action, self.environment.get_state(), LAST_PLATFORM_REWARD)
+    
     def update_game (self):
 
         self.set_effective_platforms()
@@ -151,17 +162,17 @@ class Game(arcade.Window):
 
             if self.physics_engine.can_jump():
 
-                self.decision_timeout = DECISION_TIMEOUT
-
-                self.environment.current_height = self.environment.player.bottom - \
-                    self.environment.platforms[0].height
-
+                #self.decision_timeout = DECISION_TIMEOUT
+                self.jumped()
                 self.physics_engine.jump(MOVE_Y)
 
         self.physics_engine.update()
 
         if self.environment.player.top <= self.environment.current_height:
             self.setup()
+            # Player lost
+            self.agent.learn(self.current_action, self.environment.get_state(), DEAD_REWARD)
+
 
         if self.environment.player.right < 0:
             self.environment.player.left = VIEWPORT_WIDTH
@@ -191,9 +202,10 @@ class Game(arcade.Window):
 
             self.current_action = self.agent.best_action()
             self.decision_timeout = 0
+            #self.agent.learn(self.current_action, self.environment.get_state(), DEFAULT_REWARD)
 
             if random.randint(95, 100) > 95:
-                self.agent.learn(self.current_action, self.environment.get_state(), self.get_reward())
+                self.agent.learn(self.current_action, self.environment.get_state(), DEFAULT_REWARD)
 
         self.update_game()
 
@@ -213,6 +225,7 @@ class Agent:
         return self.policy.best_action(self.state)
 
     def learn(self, action, new_state, reward):
+        print(self.state)
         previous_state = self.state
         self.policy.update(previous_state, new_state, action, reward)
         self.state = new_state
@@ -227,7 +240,7 @@ class Policy: #ANN
         self.maxX = VIEWPORT_WIDTH + 50
         self.maxY = VIEWPORT_HEIGHT + 50
 
-        self.mlp = MLPRegressor(hidden_layer_sizes = (8,),
+        self.mlp = MLPRegressor(hidden_layer_sizes = (3,4),
                                 activation = 'tanh',
                                 solver = 'adam',
                                 learning_rate_init = self.learning_rate,
