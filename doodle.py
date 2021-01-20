@@ -32,9 +32,10 @@ DISCOUNT_FACTOR = 0.1
 DECISION_TIMEOUT = 0.15
 
 DEFAULT_REWARD = -1
-NEXT_PLATFORM_REWARD = 150
-LAST_PLATFORM_REWARD = 1
-DEAD_REWARD = -200
+GOOD_X_REWARD = 1
+NEXT_PLATFORM_REWARD = 50
+LAST_PLATFORM_REWARD = -5
+DEAD_REWARD = -100
 
 def load_texture_pair(filename):
     return [
@@ -181,6 +182,16 @@ class Game(arcade.Window):
         
         self.scroll_viewport()
 
+    def get_horizontal_reward(self):
+        reward = DEFAULT_REWARD
+        oldEnvironment = self.agent.state
+        environment = self.environment.get_state()
+        xOldGap = abs(oldEnvironment[1] - oldEnvironment[0])
+        xGap = abs(environment[1] - environment[0])
+        if xGap < xOldGap:
+            reward = GOOD_X_REWARD
+        return reward
+
     def get_reward(self):
 
         reward = -5
@@ -205,7 +216,7 @@ class Game(arcade.Window):
             #self.agent.learn(self.current_action, self.environment.get_state(), DEFAULT_REWARD)
 
             if random.randint(95, 100) > 95:
-                self.agent.learn(self.current_action, self.environment.get_state(), DEFAULT_REWARD)
+                self.agent.learn(self.current_action, self.environment.get_state(), self.get_horizontal_reward())
 
         self.update_game()
 
@@ -225,7 +236,6 @@ class Agent:
         return self.policy.best_action(self.state)
 
     def learn(self, action, new_state, reward):
-        print(self.state)
         previous_state = self.state
         self.policy.update(previous_state, new_state, action, reward)
         self.state = new_state
@@ -240,7 +250,7 @@ class Policy: #ANN
         self.maxX = VIEWPORT_WIDTH + 50
         self.maxY = VIEWPORT_HEIGHT + 50
 
-        self.mlp = MLPRegressor(hidden_layer_sizes = (3,4),
+        self.mlp = MLPRegressor(hidden_layer_sizes = (3,),
                                 activation = 'tanh',
                                 solver = 'adam',
                                 learning_rate_init = self.learning_rate,
