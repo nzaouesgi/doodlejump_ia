@@ -163,7 +163,6 @@ class Game(arcade.Window):
 
             if self.physics_engine.can_jump():
 
-                #self.decision_timeout = DECISION_TIMEOUT
                 self.jumped()
                 self.physics_engine.jump(MOVE_Y)
 
@@ -213,7 +212,6 @@ class Game(arcade.Window):
 
             self.current_action = self.agent.best_action()
             self.decision_timeout = 0
-            #self.agent.learn(self.current_action, self.environment.get_state(), DEFAULT_REWARD)
 
             if random.randint(95, 100) > 95:
                 self.agent.learn(self.current_action, self.environment.get_state(), self.get_horizontal_reward())
@@ -266,8 +264,6 @@ class Policy: #ANN
 
         return np.array([
             [
-                #state[0][0] / self.maxX, state[0][1] / self.maxY,
-                #state[1][0] / self.maxX, state[1][1] / self.maxY
                 state[0] / self.maxX,
                 state[1] / self.maxX
             ]
@@ -275,12 +271,11 @@ class Policy: #ANN
 
     def best_action(self, state):
         dataset = self.state_to_dataset(state)
-        self.q_vector = self.mlp.predict(dataset)[0] #Vérifier que state soit au bon format
+        self.q_vector = self.mlp.predict(dataset)[0]
         action = self.actions[np.argmax(self.q_vector)]
         return action
 
     def update(self, previous_state, state, last_action, reward):
-        #Q(st, at) = Q(st, at) + learning_rate * (reward + discount_factor * max(Q(state)) - Q(st, at))
         maxQ = np.amax(self.q_vector)
         self.q_vector[last_action] += reward + self.discount_factor * maxQ
 
@@ -304,14 +299,11 @@ class Environment:
     def get_next_platform_coordinates(self):
         for i, platform in enumerate(self.platforms):
             if platform.bottom >= self.current_height:
-                #return (platform.center_x, platform.center_y)
                 return self.platforms[i + 1].center_x
 
     def get_state(self):
         
         return [
-            #(self.player.center_x, self.player.center_y),
-            #self.get_next_platform_coordinates()
             self.player.center_x,
             self.get_next_platform_coordinates()
         ]
