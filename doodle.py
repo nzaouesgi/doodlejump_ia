@@ -28,8 +28,8 @@ ACTION_GOING_RIGHT = 2
 ACTIONS = [ ACTION_NOTHING, ACTION_GOING_LEFT, ACTION_GOING_RIGHT ]
 
 LEARNING_RATE = 1
-DISCOUNT_FACTOR = 0.1
-DECISION_TIMEOUT = 0.15
+DISCOUNT_FACTOR = 0.5
+DECISION_TIMEOUT = 0.1
 
 DEFAULT_REWARD = -10
 NEXT_PLATFORM_REWARD = 50
@@ -53,11 +53,16 @@ class Game(arcade.Window):
         self.decision_timeout = 0
         self.current_action = ACTION_NOTHING
 
+        self.dead = False
+        self.new_platform = False
+
         self.background = arcade.load_texture("resources/bck.png")
 
     def setup(self):
 
         self.environment.reset()
+        self.dead = False
+        self.current_platform_index = 0
 
         self.last_height = self.environment.current_height
 
@@ -151,16 +156,21 @@ class Game(arcade.Window):
 
             if self.physics_engine.can_jump():
 
-                self.decision_timeout = DECISION_TIMEOUT
+                for i, platform in enumerate(self.environment.platforms):
 
-                self.environment.current_height = self.environment.player.bottom - \
-                    self.environment.platforms[0].height
+                    if platform.top < self.environment.player.bottom and i >= self.current_platform_index :
 
-                self.physics_engine.jump(MOVE_Y)
+                        if self.current_platform_index != i:
+                            self.current_platform_index = i
+                            self.environment.current_height = self.environment.platforms[self.current_platform_index].bottom
+                            self.new_platform = True
+
+                        self.physics_engine.jump(MOVE_Y)
 
         self.physics_engine.update()
 
         if self.environment.player.top <= self.environment.current_height:
+            self.dead = True
             self.setup()
 
         if self.environment.player.right < 0:
@@ -170,32 +180,50 @@ class Game(arcade.Window):
         
         self.scroll_viewport()
 
-    def get_reward(self):
+    def get_reward (self):
 
-        reward = -5
+        if self.dead:
+            return DEAD_REWARD
+        elif self.new_platform:
+            return NEXT_PLATFORM_REWARD
 
-        if self.last_height < self.environment.current_height:
-            reward = 100
-            self.last_height = self.environment.current_height
+        print(self.current_platform_index)
+
+        state = self.environment.get_state(self.environment.platforms[self.current_platform_index + 1])
         
-        elif self.last_height > self.environment.current_height:
-            reward = -50
-        
-        return reward
+        player_x = state[0]
+        next_platform_x = state[1]
+
+        distance =  player_x - next_platform_x if player_x >= next_platform_x else next_platform_x - player_x
+
+        percentage = -(abs((distance / VIEWPORT_WIDTH) * 100) // 2)
+
+        return percentage
+
 
     def on_update(self, delta_time):
 
         self.decision_timeout += delta_time
+        decide = False
 
         if self.decision_timeout >= DECISION_TIMEOUT:
-
-            self.current_action = self.agent.best_action()
             self.decision_timeout = 0
-
-            if random.randint(95, 100) > 95:
-                self.agent.learn(self.current_action, self.environment.get_state(), self.get_reward())
+            decide = True
+            self.current_action = self.agent.best_action()
 
         self.update_game()
+
+        if decide:
+
+            reward = self.get_reward()
+
+            self.agent.learn(
+                self.current_action, 
+                self.environment.get_state(self.environment.platforms[self.current_platform_index]), 
+                reward)
+
+            self.dead = False
+            self.new_platform = False
 
 class Agent:
 
@@ -206,7 +234,7 @@ class Agent:
         self.reset()
 
     def reset(self):
-        self.state = self.environment.get_state()
+        self.state = self.environment.get_state(self.environment.platforms[0])
         self.score = 0
 
     def best_action (self):
@@ -224,14 +252,14 @@ class Policy: #ANN
         self.learning_rate = LEARNING_RATE
         self.discount_factor = DISCOUNT_FACTOR
         self.actions = ACTIONS
-        self.maxX = VIEWPORT_WIDTH + 50
-        self.maxY = VIEWPORT_HEIGHT + 50
+        self.maxX = VIEWPORT_WIDTH
+        self.maxY = VIEWPORT_HEIGHT
 
-        self.mlp = MLPRegressor(hidden_layer_sizes = (8,),
+        self.mlp = MLPRegressor(hidden_layer_sizes = (2,),
                                 activation = 'tanh',
                                 solver = 'adam',
                                 learning_rate_init = self.learning_rate,
-                                #max_iter = 1,
+                                max_iter = 1,
                                 warm_start = True)
         self.mlp.fit([[0, 0]], [[0, 0, 0]])
         self.q_vector = [ 0, 0, 0 ]
@@ -260,7 +288,7 @@ class Policy: #ANN
         #Q(st, at) = Q(st, at) + learning_rate * (reward + discount_factor * max(Q(state)) - Q(st, at))
         maxQ = np.amax(self.q_vector)
         self.q_vector[last_action] += reward + self.discount_factor * maxQ
-
+        #self.q_vector[last_action] = reward
         inputs = self.state_to_dataset(previous_state)
         outputs = np.array([self.q_vector])
         self.mlp.fit(inputs, outputs)
@@ -278,19 +306,13 @@ class Environment:
         self.setup_player()
         self.current_height = 0
 
-    def get_next_platform_coordinates(self):
-        for i, platform in enumerate(self.platforms):
-            if platform.bottom >= self.current_height:
-                #return (platform.center_x, platform.center_y)
-                return self.platforms[i + 1].center_x
-
-    def get_state(self):
+    def get_state(self, next_platform):
         
         return [
             #(self.player.center_x, self.player.center_y),
             #self.get_next_platform_coordinates()
             self.player.center_x,
-            self.get_next_platform_coordinates()
+            next_platform.center_x
         ]
 
     def setup_platforms(self):
@@ -339,10 +361,8 @@ class Environment:
                 GAME_WIDTH - PLATFORM_WIDTH
             )
             y = random.randint(
-                #current_height + min_decay,
-                current_height + MAX_JUMP_HEIGHT,
+                current_height + min_decay,
                 current_height + MAX_JUMP_HEIGHT
-                
             )
 
             if random.choice([ True, False ]):
